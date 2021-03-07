@@ -5,7 +5,7 @@ require("@openzeppelin/test-helpers/configure")({
   provider: "http://localhost:7545",
 });
 
-const { BN, constants, expectRevert } = require("@openzeppelin/test-helpers");
+const { constants, expectRevert } = require("@openzeppelin/test-helpers");
 const { MAX_UINT256 } = constants;
 let Token;
 const [sender, receiver, receiver1, other, other1] = accounts;
@@ -22,7 +22,7 @@ beforeEach(async () => {
   await Token.exclude([sender], { from: sender });
 });
 
-describe("EchoStandard", () => {
+describe("EcoStandard", () => {
   it("is deployed to sender", async () => {
     try {
       const bal = await Token.balanceOf(sender);
@@ -44,7 +44,7 @@ describe("EchoStandard", () => {
     try {
       const symbol = await Token.symbol();
       expect(symbol).to.be.a("string");
-      expect(symbol).to.equal("ECO");
+      expect(symbol).to.equal("ECHO");
     } catch (error) {
       console.log(error);
     }
@@ -58,17 +58,7 @@ describe("EchoStandard", () => {
       console.log(error);
     }
   });
-  it("exclude", async () => {
-    try {
-      await Token.exclude([other], {
-        from: sender,
-      });
-      const excld = await Token.isExcluded(other);
-      expect(excld).to.be.true;
-    } catch (error) {
-      console.log(error);
-    }
-  });
+
   it("only owner can exclude", async () => {
     try {
       await expectRevert(
@@ -105,17 +95,84 @@ describe("EchoStandard", () => {
     }
   });
 
-  it("mint rewards on transfer for HODL", async () => {
+  it("mint rewards on transfer for min HODL period", async () => {
     try {
-      await Token.transfer(receiver, toWei("100"), { from: sender });
+      await Token.transfer(receiver, toWei("40000"), { from: sender });
 
       const snapShot = await helper.takeSnapshot();
       const snapshotId = snapShot["result"];
-      await helper.advanceTime(604820);
+      await helper.advanceTime(604801);
       await Token.transfer(receiver1, toWei("10"), { from: receiver });
       const nBal = await Token.balanceOf(receiver);
+      console.log(nBal.toString());
+      expect(
+        nBal.toString() > toWei("40700").toString() &&
+          nBal.toString() < toWei("40800").toString(),
+      ).to.be.true;
+      await helper.revertToSnapShot(snapshotId);
+    } catch (error) {
+      console.log(error);
+    }
+  });
 
-      expect(nBal.toString() > toWei("87.8").toString()).to.be.true;
+  it("mint rewards on transfer for max HODL period", async () => {
+    try {
+      await Token.transfer(receiver, toWei("40000"), { from: sender });
+
+      const snapShot = await helper.takeSnapshot();
+      const snapshotId = snapShot["result"];
+      await helper.advanceTime(15811200);
+      await Token.transfer(receiver1, toWei("10"), { from: receiver });
+      const maxHODL = await Token.balanceOf(receiver);
+      console.log(maxHODL.toString());
+      expect(
+        maxHODL.toString() > toWei("236000").toString() &&
+          maxHODL.toString() < toWei("238000").toString(),
+      ).to.be.true;
+      await helper.revertToSnapShot(snapshotId);
+    } catch (error) {
+      console.log(error);
+    }
+  });
+
+  it("limits compounding to maxHODL time", async () => {
+    try {
+      await Token.transfer(receiver, toWei("40000"), { from: sender });
+
+      const snapShot = await helper.takeSnapshot();
+      const snapshotId = snapShot["result"];
+      await helper.advanceTime(31536000);
+      await Token.transfer(receiver1, toWei("10"), { from: receiver });
+      const nBal = await Token.balanceOf(receiver);
+      console.log(nBal.toString());
+      expect(
+        nBal.toString() > toWei("236000").toString() &&
+          nBal.toString() < toWei("237000").toString(),
+      ).to.be.true;
+      // expect(nBal.toString() < toWei("237000").toString()).to.be.true;
+      await helper.revertToSnapShot(snapshotId);
+    } catch (error) {
+      console.log(error);
+    }
+  });
+
+  it("will not mint reward until after another 7 days if reward was mint within the last 8 days", async () => {
+    try {
+      await Token.transfer(receiver, toWei("40000"), { from: sender });
+
+      const snapShot = await helper.takeSnapshot();
+      const snapshotId = snapShot["result"];
+      await helper.advanceTime(31536000);
+      await Token.transfer(receiver1, toWei("10"), { from: receiver });
+      const nBal = await Token.balanceOf(receiver);
+      console.log("firstBalance: ", nBal.toString());
+
+      await helper.advanceTime(587520);
+      await Token.transfer(other, toWei("100"), { from: receiver });
+      const bal = await Token.balanceOf(receiver);
+      console.log("secondBalance: ", bal.toString());
+      expect(+nBal.toString() - +toWei("100").toString() === +bal.toString()).to
+        .be.true;
       await helper.revertToSnapShot(snapshotId);
     } catch (error) {
       console.log(error);

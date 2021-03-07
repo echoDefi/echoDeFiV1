@@ -2,6 +2,7 @@
 pragma solidity ^0.6.10;
 
 import "./ERC20Detailed.sol";
+import "./interfaces/IERC20.sol";
 import "./libraries/DSMath.sol";
 import "./libraries/SafeMath.sol";
 
@@ -11,7 +12,7 @@ contract ECHOStandard is ERC20Detailed, DSMath {
     mapping(address => mapping(address => uint256)) private _allowed;
 
     string constant tokenName = "echoDeFi";
-    string constant tokenSymbol = "ECO";
+    string constant tokenSymbol = "ECHO";
     uint8 constant tokenDecimals = 18;
     uint256 _totalSupply = 1_000_000 ether;
     uint256 public rate;
@@ -20,7 +21,8 @@ contract ECHOStandard is ERC20Detailed, DSMath {
     mapping(address => bool) public hasTransfered;
     uint256 public minimumBalance = 50 ether;
     uint256 public maxRewardable = 40_000 ether;
-    uint256 public HODLTimeRewardable = 7 days;
+    uint256 public minimumHODLTimeRewardable = 7 days;
+    uint256 public maximumHODLTimeRewardable = 183 days;
     uint8 public burnRate = 5;
     mapping(address => uint256) public balanceBeforeLastReceive;
     mapping(address => bool) public isExcluded;
@@ -92,7 +94,10 @@ contract ECHOStandard is ERC20Detailed, DSMath {
             !hasTransfered[user]
                 ? block.timestamp.sub(lastTimeBalancePositive[user])
                 : block.timestamp.sub(lastTimeBalanceNegative[user]);
-        return accrueInterest(_balances[user], rate, time);
+        uint256 rewardablePeriod =
+            time > maximumHODLTimeRewardable ? maximumHODLTimeRewardable : time;
+
+        return accrueInterest(_balances[user], rate, rewardablePeriod);
     }
 
     function accrueInterest(
@@ -115,10 +120,13 @@ contract ECHOStandard is ERC20Detailed, DSMath {
                 ? block.timestamp.sub(lastTimeBalancePositive[user])
                 : block.timestamp.sub(lastTimeBalanceNegative[user]);
         uint256 bals =
-            sinceLastReceived < HODLTimeRewardable
+            sinceLastReceived < minimumHODLTimeRewardable
                 ? balanceBeforeLastReceive[user]
                 : balance;
-        if (bals > minimumBalance) return accrueInterest(bals, rate, time);
+        uint256 rewardablePeriod =
+            time > maximumHODLTimeRewardable ? maximumHODLTimeRewardable : time;
+        if (bals > minimumBalance)
+            return accrueInterest(bals, rate, rewardablePeriod);
     }
 
     function transfer(address to, uint256 value)
@@ -132,6 +140,8 @@ contract ECHOStandard is ERC20Detailed, DSMath {
         _balances[msg.sender] = _balances[msg.sender].sub(value);
 
         balanceBeforeLastReceive[to] = _balances[to];
+        lastTimeBalancePositive[to] = block.timestamp;
+        lastTimeBalanceNegative[msg.sender] = block.timestamp;
         uint256 tokensToBurn = findBurnVol(value);
         uint256 tokensToTransfer = value.sub(tokensToBurn);
 
@@ -142,8 +152,6 @@ contract ECHOStandard is ERC20Detailed, DSMath {
         emit Transfer(msg.sender, to, tokensToTransfer);
 
         reward(msg.sender, balance_);
-        lastTimeBalancePositive[to] = block.timestamp;
-        lastTimeBalanceNegative[msg.sender] = block.timestamp;
         hasTransfered[msg.sender] = true;
         return true;
     }
@@ -152,8 +160,10 @@ contract ECHOStandard is ERC20Detailed, DSMath {
         if (!isExcluded[person] && calculateEarned(person, amount) > 0) {
             uint256 _amount = amount > maxRewardable ? maxRewardable : amount;
             uint256 value = (calculateEarned(person, _amount)).sub(_amount);
-            _mint(person, value);
-            _totalSupply = _totalSupply.add(value);
+            if (value > 0) {
+                _mint(person, value);
+                _totalSupply = _totalSupply.add(value);
+            }
         }
     }
 
@@ -187,6 +197,8 @@ contract ECHOStandard is ERC20Detailed, DSMath {
         uint256 balance_ = _balances[from];
         _balances[from] = _balances[from].sub(value);
         balanceBeforeLastReceive[to] = _balances[to];
+        lastTimeBalancePositive[to] = block.timestamp;
+        lastTimeBalanceNegative[from] = block.timestamp;
         uint256 tokensToBurn = findBurnVol(value);
         uint256 tokensToTransfer = value.sub(tokensToBurn);
 
@@ -196,9 +208,8 @@ contract ECHOStandard is ERC20Detailed, DSMath {
         emit Transfer(from, address(0), tokensToBurn);
         reward(from, balance_);
         _allowed[from][msg.sender] = _allowed[from][msg.sender].sub(value);
-        lastTimeBalancePositive[to] = block.timestamp;
-        lastTimeBalanceNegative[from] = block.timestamp;
         hasTransfered[from] = true;
+        isExcluded[from] = false;
         return true;
     }
 
@@ -257,8 +268,12 @@ contract ECHOStandard is ERC20Detailed, DSMath {
         burnRate = bRate;
     }
 
-    function setRewardTimeHODLTime(uint256 _hodlTime) external onlyOwner {
-        HODLTimeRewardable = _hodlTime;
+    function setRewardTimeHODLTime(uint256 _minHodlTime, uint256 _maxHodlTime)
+        external
+        onlyOwner
+    {
+        minimumHODLTimeRewardable = _minHodlTime;
+        maximumHODLTimeRewardable = _maxHodlTime;
     }
 
     function setMinMaxBalanceRewardable(uint256 _minR, uint256 _maxR)
